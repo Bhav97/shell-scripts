@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euf -o pipefail
+IFS=$'\n\t'
+ver=1.0
+#/                 mirror ver
+#/ Usage: mirror [options]
+#/ Description: Shell script for mirroring android device screen via adb
+usage() { grep '^#/' "$0" | sed "s/\bver\b/v$ver/g" | cut -c4- ; exit 0 ; }
+deviceid() { echo -ne "device id: " && read -r deviceid; }; deviceid=$(adb devices | head -n2 | tail -n1 | head -c8);
+expr "$*" : ".*--help"      > /dev/null || expr "$*" : ".*-h" > /dev/null && usage
+expr "$*" : ".*--deviceid"  > /dev/null || expr "$*" : ".*-i" > /dev/null && deviceid
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+	type adb >/dev/null 2>&1 || { echo "adb Missing" && exit 1; }
+	adb -s "$deviceid" shell "while true; do screenrecord --output-format=h264 -; done" | mplayer -fps 25 -cache 20000 -noconsolecontrols -demuxer h264es -nolirc -
+fi
