@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+ver=1.0.0
+
+#todo add --directory [~/path/to/flashfiles] | select directory with files
+#todo add --devicemap [~/path/to/devicemap]  | flash from txt filemap
+#todo add --mode      [adb|fastboot]         | select device mode <adb default>
+#todo fix changelog
+#todo fix nfix l62.c140
+#todo fix unlock
+
+#/                 mato ver
+#/ Usage: mato [option]
+#/ Description: Shell script for managing fastboot flashes
+#/ Options:
+#/   --flash   [-f]: Fastboot flash <Default>
+#/   --erase   [-e]: Erase partitions and flash
+#/
+#/   --help    [-h]: Display this help message
+#/   --version [-v]: Display version
+#/
+#/   --yesall   [-y]: Override user acknowledgements
+#/   --vendorid [-i]: Override default vendor id <0x1ebf>
+#/
+#/   --todo    [-t]: Display todo list
+#/   --changes [-c]: Display changelog
+
+usage() { grep '^#/' "$0" | sed "s/\bver\b/v$ver/g" | cut -c4- ; exit 0 ; }
+todo()  { grep '^#todo' "$0" | cut -c6- ; exit 0 ; }
+
+changelog() { git log "$ver"..HEAD --oneline || echo "log unavailable" ; exit 0 ; }
+version() { echo "mato version $ver" ; exit 0 ; }
+
+erase()  { eflag=1; warning "will erase partitions before flash"; }; eflag=0;
+sudd()   { rflag=1; warning "overriding rootcheck";               }; rflag=0;
+yesall() { yflag=1; warning "overriding user acknowledgements";   }; yflag=0;
+
+vendor() { 
+	vendorid=0x1eb1
+	info "vendorid set to $vendorid"     
+}; vendorid=0x1ebf;
+
+# while [[ $# -gt 1 ]]; do
+# 	case "$1" in
+# 		-h || --help)
+		
+# 		shift
+# 		;;
+# 	esac
+# done
+expr "$*" : ".*--help"      > /dev/null || expr "$*" : ".*-h " > /dev/null && usage
+expr "$*" : ".*--version"   > /dev/null || expr "$*" : ".*-v " > /dev/null && version
+expr "$*" : ".*--todo"      > /dev/null || expr "$*" : ".*-t " > /dev/null && todo
+expr "$*" : ".*--changes"   > /dev/null || expr "$*" : ".*-c " > /dev/null && changelog
+expr "$*" : ".*--erase"     > /dev/null || expr "$*" : ".*-e " > /dev/null && erase
+expr "$*" : ".*--vendorid"  > /dev/null || expr "$*" : ".*-i " > /dev/null && vendor
+expr "$*" : ".*--yesall"    > /dev/null || expr "$*" : ".*-y " > /dev/null && yesall
+expr "$*" : ".*--override"  > /dev/null || expr "$*" : ".*-o " > /dev/null && sudd 
+
+readonly LOG_FILE="/tmp/$(basename "$0").log"
+info()    { echo -e "\033[0;32m[INFO] $*\033[0m"    | tee -a "$LOG_FILE" >&2 ; }
+warning() { echo -e "\033[0;34m[WARNING] $*\033[0m" | tee -a "$LOG_FILE" >&2 ; }
+error()   { echo -e "\033[0;36m[ERROR] $*\033[0m"   | tee -a "$LOG_FILE" >&2 ; }
+fatal()   { echo -e "\033[0;31m[FATAL] $*\033[0m"   | tee -a "$LOG_FILE" >&2 ; exit 1 ; }
+
+# cleanup logfile
+cleanup() { sed -i 's/\x1B\[[0-9;]*[JKmsu]//g' "$LOG_FILE"; }
+
+# adb, fastboot
+checkdependencies() {
+	type fastboot >/dev/null 2>&1 || { fatal "fastboot Missing"; }
+	info "looking for fastboot: $(type fastboot)"
+	type adb >/dev/null 2>&1 || { fatal "adb Missing"; }
+	info "looking for adb: $(type adb)"
+}
+
+acknowledge() {
+	if [[ "$yflag" = 1 ]]; then return; fi;
+	warning "$* press return to continue, ctrl-c to exit" && read -rs;
+}
+
+rootcheck() {
+	if [[ "$rflag" = 1 ]]; then return; fi; 
+	if [[ "$EUID" = 0 ]]; then fatal "don't run as root, instead fix your udev rules"; fi 
+}
+
+unlock() { 
+	acknowledge "Need to unlock bootloader."
+	warning "unlocking bootloader"
+	fastboot -i "$1" -s "$2" oem unlock
+}
+
+# throw error if RSA fingerprint is not recognised by device
+checkadbauth() { expr "$(adb devices | grep "$*")" : "unauthorized" > /dev/null && fatal "missing permission on device: $*"; info oh; }
+# throw error if udev rules are not set up properly and fastboot does not run without root
+checkfastboot() { expr "$(fastboot -i "$1" devices | grep "$2" | head -c4)" : "no p" > /dev/null && fatal "insufficient permissions"; info nfix; }
+# unlock bootloader if locked
+checkbootloaderstate() { expr "$(fastboot -i "$1" -s "$2" oem device-info |& grep "Device unlocked")" : ".*false" > /dev/null && unlock "$1" "$2"; }
+
+findadbdevice() {
+	local devices deviceid
+	# no adb device, will check fastboot
+	if [[ "$(adb devices | wc -l)" = *2* ]]; then fatal "no devices :(" ; fi
+	# more than 1 device connected	
+	if [[ "$(adb devices | wc -l)" -gt 3 ]]; then
+		for ((i=0;i<$(adb devices | sed '1d;$d' | wc -l);i++)); do
+			devices+=$(adb devices | sed '1d;$d' | head -n${i+1} | tail -n1 | head -c8)
+		done
+		warning "Multiple Devices. Select one"
+		select deviceid in $devices; do info "$deviceid selected"; checkauth "$deviceid"; break; done
+		checkadbauth "$deviceid"
+		devicemodel=$(adb devices -l | grep -o -P '(?<=model:).*(?=device)')
+	# only one device
+	else
+		echo a
+		deviceid=$(adb devices | sed '1d;$d' | head -c8)
+	fi
+	# reboot to fastboot
+	info "rebooting into bootloader"
+	adb -s "$deviceid" reboot-bootloader
+	sleep 10
+}
+
+findfastbootdevice() {
+	# more than 1 device
+	if [[ $(fastboot -i $vendorid devices | wc -l) -gt 1 ]]; then
+		info "reached fastboot"
+		for ((i=0;i<$(fastboot -i $vendorid devices | wc -l);i++)); do
+			devices+=$(fastboot -i $vendorid devices | head -n${i+1} | tail -n1 | head -c8)
+		done
+		warning "Multiple devices. Select one"
+		select deviceid in $devices; do info "$deviceid selected" && checkfastboot "$vendorid" "$deviceid"; break; done
+	# 1 device
+	elif [[ $(fastboot -i $vendorid devices | wc -l) = *1* ]]; then
+		info "reached fastboot"
+		deviceid=$(fastboot -i $vendorid devices | head -c8)
+		checkfastboot "$vendorid" "$deviceid"
+	# no device
+	else
+		fatal "no device :("
+	fi
+}
+
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+	trap cleanup EXIT
+	echo $vendorid
+	# info "$(date)"
+	# rootcheck
+	# checkdependencies
+	# findadbdevice
+	# findfastbootdevice
+	# echo "$devicemodel"
+	# echo "Vendor Id: $vendorid"
+	# echo "Device: $deviceid"
+	# acknowledge "Proceed with this device?"
+	# unlock
+fi
