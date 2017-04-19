@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euf -o pipefail
+IFS=$'\n\t'
+ver=1.0
+#/                 blresync ver
+#/ Usage: blresync [options]
+#/ Description: Shell script for resyncing bluetooth A2DP audio by switching to HFP and back
+#/ Options: 
+#/    --help [-h]:    Display this help message
+BLUEZCARDNUMBER=$(pactl list cards short | grep bluez | head -c1)
+usage() { grep '^#/' "$0" | sed "s/\bver\b/v$ver/g" | cut -c4- ; exit 0 ; }
+expr "$*" : ".*--help"      > /dev/null || expr "$*" : ".*-h" > /dev/null && usage
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+	type pactl >/dev/null 2>&1 || { echo "no pulseaudio?" && exit 1; }
+	pactl set-card-profile "$BLUEZCARDNUMBER" a2dp_sink
+	pactl set-card-profile "$BLUEZCARDNUMBER" headset_head_unit
+	pactl set-card-profile "$BLUEZCARDNUMBER" a2dp_sink
+	# notify-send "Bluetooth audio resynced"
+fi
