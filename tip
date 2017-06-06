@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euf -o pipefail
+IFS=$'\n\t'
+ver=1.c
+XIP=xinput
+type "${XIP}" >/dev/null 2>&1 || { echo "${XIP} not found" && exit 1; }
+#/                 TIP ver
+#/ Usage: tip [""/"enable"/"disable"] - BeTter InPut
+#/ Description: Uses xinput to
+#/	   * enable tap to click
+#/	   * natural scroll
+#/	   * disable/enable inbuilt keyboard
+usage() { grep '^#/' "$0" | sed "s/\bver\b/v$ver/g" | cut -c4- ; exit 0 ; }
+nable() { nabled=1; }; nabled=0;
+if [ "$#" -ne 1 ]; then usage; exit; fi
+expr "$*" : ".*help"    > /dev/null || expr "$*" : ".*-h" > /dev/null && usage
+expr "$*" : ".*enable"  > /dev/null || expr "$*" : ".*-e" > /dev/null && nable
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
+	tp_id=$("${XIP}" list | grep "Touchpad" | cut -d'=' -f2 | cut -d'[' -f1)
+	kb_id=$("${XIP}" list | grep "AT Translated Set 2 keyboard" | cut -d'=' -f2 | cut -d'[' -f1)
+	kb_cid=$("${XIP}" list | grep "Virtual core keyboard" | cut -d'=' -f2 | cut -d'[' -f1)
+	prop_tap_id=$("${XIP}" list-props $((tp_id)) | grep "Tapping Enabled (" | cut -d'(' -f2 | cut -d')' -f1)
+	prop_scroll_id=$(xinput list-props $((tp_id)) | grep "Natural Scrolling Enabled (" | cut -d'(' -f2 | cut -d')' -f1)
+
+	"${XIP}" --set-prop $((tp_id)) $((prop_scroll_id)) 1
+	"${XIP}" --set-prop $((tp_id)) $((prop_tap_id)) 1
+
+	if [ "$nabled" -eq 1 ]; then
+	    "${XIP}" reattach $((kb_id))  $((kb_cid))
+	else
+		"${XIP}" float $((kb_id))
+	fi
+fi
+
