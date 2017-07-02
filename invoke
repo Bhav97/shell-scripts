@@ -1,0 +1,50 @@
+#!/bin/sh
+
+# A script from  
+# https://stackoverflow.com/questions/17775186/buffer-overflow-works-in-gdb-but-not-without-it
+# that clears environment variable to ease stack exploitation of vulnerable executables
+
+usage() {
+	cat <<EOF
+Usage: invoke -e KEY=VALUE prog [args...]
+
+-h| -\?          display this help text
+
+-d               open executable in gdb
+-t               run using a temporary device
+-e KEY=VALUE     export key value pair 
+EOF
+}
+
+while getopts "dte:h?" opt ; do
+  case "$opt" in
+    h|\?)
+      usage
+      exit 0
+      ;;
+    t|--tty)
+      tty=1
+      gdb=1
+      ;;
+    d|--debug)
+      gdb=1
+      ;;
+    e|--env)
+      env=$OPTARG
+      ;;
+  esac
+done
+
+shift $((OPTIND - 1))
+prog=$(readlink -f "$1")
+shift
+if [ -n "$gdb" ] ; then
+  if [ -n "$tty" ]; then
+    touch /tmp/gdb-debug-pty
+    exec env - ${env} TERM=screen PWD="${PWD}" gdb -tty /tmp/gdb-debug-pty --args "${prog}" $@
+  else
+    exec env - ${env} TERM=screen PWD="${PWD}" gdb --args "${prog}" $@
+  fi
+else
+  exec env - ${env} TERM=screen PWD="${PWD}" "${prog}" $@
+fi
