@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+# revert screen off to 5minutes
+revert() { xset dpms 0 0 300; }
+wall="/tmp/lck.png"
+icon:="/home/bhav/Projects/scripts/scrlck.png"
+fort=$(expand -t 2 <(fortune -s))
+maim "${wall}"
+convert -scale 10% -scale 1000% -font Inconsolata -gravity SouthWest -pointsize 30 -annotate +50+50+50+50 "${fort}" -undercolor \#fafafa "${wall}" "${wall}"
+convert -font Inconsolata -gravity Center -pointsize 90 -annotate -20-200+50+50 "System Locked" -undercolor \#424242 -fill White "${wall}" "${wall}"
+#convert -gravity center -composite -matte "${wall}" "${icon}" "${wall}"
+#convert ${wall} \( -size 200x80 -background none label:"${fort}" -trim -gravity center -extent 200x80 \) -gravity southwest -geometry +312+66 -composite ${wall}
+#convert "${wall}" \( -size 173x50 -background White label:"${fort}" -trim -gravity center -extent 173x50 \) -gravity northwest -geometry +312+66 -composite "${wall}"
+trap revert SIGHUP SIGINT SIGTERM
+xset +dpms dpms 0 0 15
+i3lock -n -u -f -i "${wall}"
+rm "${wall}"
+revert
